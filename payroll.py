@@ -38,7 +38,7 @@ class PayrollSystem:
 
         self.root.resizable(True, True)
 
-        self.font_size = 14 if self.mobile else 11
+        self.font_size = 10 if self.mobile else 11
 
         self.create_database()
 
@@ -323,7 +323,7 @@ class PayrollSystem:
         Label(
             content,
             text=title,
-            font=self.font(6, True),
+            font=self.font(4, True),
             bg=BG,
             fg=TEXT,
             wraplength=self.wrap(),
@@ -353,7 +353,7 @@ class PayrollSystem:
             parent,
             text=text,
             command=command,
-            font=self.font(1, True),
+            font=self.font(0, True),
             bg=bg,
             fg=fg,
             activebackground=bg,
@@ -365,7 +365,7 @@ class PayrollSystem:
             fill=X,
             padx=16,
             pady=6,
-            ipady=12 if self.mobile else 8
+            ipady=8 if self.mobile else 8
         )
 
     def card(self, parent, heading=None):
@@ -384,7 +384,7 @@ class PayrollSystem:
             Label(
                 frame,
                 text=heading,
-                font=self.font(1, True),
+                font=self.font(0, True),
                 bg=CARD,
                 fg=TEXT,
                 anchor="w",
@@ -436,7 +436,7 @@ class PayrollSystem:
 
         entry = Entry(
             parent,
-            font=self.font(1),
+            font=self.font(0),
             show=show,
             relief=SOLID,
             bd=1,
@@ -448,7 +448,7 @@ class PayrollSystem:
         entry.pack(
             fill=X,
             padx=16,
-            ipady=9 if self.mobile else 5
+            ipady=6 if self.mobile else 5
         )
 
         if default:
@@ -461,7 +461,7 @@ class PayrollSystem:
         Label(
             parent,
             text=text,
-            font=self.font(-2),
+            font=self.font(-1),
             bg=BG,
             fg=MUTED,
             wraplength=self.wrap(),
@@ -692,7 +692,7 @@ class PayrollSystem:
                 fill=X,
                 padx=12,
                 pady=(8, 12),
-                ipady=10 if self.mobile else 6
+                ipady=7 if self.mobile else 6
             )
 
         self.button(content, "Back", self.admin_page, "secondary")
@@ -912,7 +912,7 @@ class PayrollSystem:
                 fill=X,
                 padx=12,
                 pady=(8, 12),
-                ipady=10 if self.mobile else 6
+                ipady=7 if self.mobile else 6
             )
 
         self.button(content, "Back", self.admin_page, "secondary")
@@ -1337,7 +1337,7 @@ class PayrollSystem:
         Label(
             content,
             text="ATTENDANCE HISTORY",
-            font=self.font(2, True),
+            font=self.font(1, True),
             bg=BG,
             fg=TEXT
         ).pack(pady=(18, 6))
@@ -1409,7 +1409,7 @@ class PayrollSystem:
                 fill=X,
                 padx=12,
                 pady=(8, 12),
-                ipady=10 if self.mobile else 6
+                ipady=7 if self.mobile else 6
             )
 
         self.button(
