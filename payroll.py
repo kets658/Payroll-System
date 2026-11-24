@@ -6,16 +6,59 @@ import hashlib
 import secrets
 from datetime import datetime
 
+# ----------------------------------------------------------------------
+# Phone-friendly Tkinter payroll system.
+# Runs on desktop and on Android through Pydroid 3 (it has Tkinter).
+#
+# What changed from the original:
+#   * window fills the screen on phones (no fixed 900x600)
+#   * every page scrolls, including by dragging with a finger
+#   * big touch-sized buttons and inputs
+#   * wide tables are replaced by cards that fit a narrow screen
+#   * the payslip is a page, not a pop-up window
+# The database, payroll formulas and password hashing are unchanged.
+# ----------------------------------------------------------------------
+
+BG = "#f4f6fa"
+CARD = "#ffffff"
+BORDER = "#d9dee8"
+PRIMARY = "#2457d6"
+DANGER = "#c0392b"
+MUTED = "#667085"
+TEXT = "#1c2333"
+
+MAX_CONTENT_WIDTH = 560     # content stays this wide on big screens
+
 
 class PayrollSystem:
 
     def __init__(self):
         self.root = Tk()
         self.root.title("Payroll System")
-        self.root.geometry("900x600")
-        self.root.resizable(False, False)
+        self.root.configure(bg=BG)
+
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+
+        # Phones: narrow screen or portrait orientation
+        self.mobile = screen_w <= 800 or screen_h > screen_w
+
+        if self.mobile:
+            self.root.geometry(f"{screen_w}x{screen_h}+0+0")
+        else:
+            self.root.geometry("900x650")
+            self.root.minsize(340, 480)
+
+        self.root.resizable(True, True)
+
+        # Bigger text and controls on phones
+        self.font_size = 14 if self.mobile else 11
 
         self.create_database()
+
+    # ------------------------------------------------------------------
+    # DATABASE (unchanged)
+    # ------------------------------------------------------------------
 
     def connect_database(self):
         conn = sqlite3.connect("payroll.db")
@@ -141,6 +184,10 @@ class PayrollSystem:
         except (ValueError, AttributeError):
             return False
 
+    # ------------------------------------------------------------------
+    # PAYROLL COMPUTATIONS (unchanged)
+    # ------------------------------------------------------------------
+
     def compute_tax(self, gross):
         """
         Philippine TRAIN withholding tax (monthly brackets).
@@ -167,7 +214,6 @@ class PayrollSystem:
         """
         SSS employee share (2025-2026 schedule): 5% of the Monthly Salary
         Credit (MSC). MSC moves in PHP 500 steps, min 5,000, max 35,000.
-        (Employer share of 10% + EC is paid by the company, not deducted.)
         """
 
         msc = int((monthly_pay + 250) // 500) * 500
@@ -185,28 +231,42 @@ class PayrollSystem:
 
         return round(fund_salary * 0.02, 2)
 
+    # ------------------------------------------------------------------
+    # PHONE-FRIENDLY UI HELPERS
+    # ------------------------------------------------------------------
+
+    def font(self, delta=0, bold=False):
+
+        return (
+            "Arial",
+            self.font_size + delta,
+            "bold" if bold else "normal"
+        )
+
     def clear_window(self):
 
-        # Remove mouse wheel binding left by scrollable pages
-        self.root.unbind_all("<MouseWheel>")
+        # Remove scroll bindings left by the previous page
+        for sequence in (
+            "<MouseWheel>", "<Button-4>", "<Button-5>",
+            "<ButtonPress-1>", "<B1-Motion>"
+        ):
+            self.root.unbind_all(sequence)
 
         for widget in self.root.winfo_children():
             widget.destroy()
 
-    def create_title(self, text):
+    def new_page(self, title):
+        """
+        Clear the screen and return a scrollable, centered content frame
+        with the page title already added.
+        """
 
-        Label(
-            self.root,
-            text=text,
-            font=("Arial", 20, "bold")
-        ).pack(pady=20)
+        self.clear_window()
 
-    def create_scrollable_frame(self):
-
-        container = Frame(self.root)
+        container = Frame(self.root, bg=BG)
         container.pack(fill=BOTH, expand=True)
 
-        canvas = Canvas(container, highlightthickness=0)
+        canvas = Canvas(container, highlightthickness=0, bg=BG)
 
         scrollbar = ttk.Scrollbar(
             container,
@@ -214,43 +274,247 @@ class PayrollSystem:
             command=canvas.yview
         )
 
-        content = Frame(canvas)
-
-        content.bind(
-            "<Configure>",
-            lambda event: canvas.configure(
-                scrollregion=canvas.bbox("all")
-            )
-        )
+        content = Frame(canvas, bg=BG)
 
         window_id = canvas.create_window(
             (0, 0),
             window=content,
-            anchor="nw"
+            anchor="n"
         )
 
-        canvas.bind(
-            "<Configure>",
-            lambda event: canvas.itemconfigure(
+        def fit_content(event=None):
+
+            width = canvas.winfo_width()
+
+            canvas.itemconfigure(
                 window_id,
-                width=event.width
+                width=min(width, MAX_CONTENT_WIDTH)
             )
-        )
+
+            canvas.coords(window_id, width // 2, 0)
+
+            canvas.configure(
+                scrollregion=(
+                    0,
+                    0,
+                    width,
+                    max(
+                        content.winfo_reqheight(),
+                        canvas.winfo_height()
+                    )
+                )
+            )
+
+        canvas.bind("<Configure>", fit_content)
+        content.bind("<Configure>", fit_content)
 
         canvas.configure(yscrollcommand=scrollbar.set)
 
         canvas.pack(side=LEFT, fill=BOTH, expand=True)
-        scrollbar.pack(side=RIGHT, fill=Y)
 
-        def scroll_with_mouse(event):
-            canvas.yview_scroll(
-                int(-1 * (event.delta / 120)),
-                "units"
+        # Thin scrollbar only on desktop; phones scroll by dragging
+        if not self.mobile:
+            scrollbar.pack(side=RIGHT, fill=Y)
+
+        def scrollable():
+            return content.winfo_reqheight() > canvas.winfo_height()
+
+        # Mouse wheel (Windows / macOS / Linux)
+        def on_wheel(event):
+
+            if not scrollable():
+                return
+
+            if event.num == 4:
+                canvas.yview_scroll(-3, "units")
+
+            elif event.num == 5:
+                canvas.yview_scroll(3, "units")
+
+            elif event.delta:
+                step = event.delta / 120 if abs(event.delta) >= 120 \
+                    else event.delta
+                canvas.yview_scroll(int(-step), "units")
+
+        # Finger / click-and-drag scrolling
+        drag = {"y": 0, "top": 0.0, "ok": False}
+
+        def on_press(event):
+
+            drag["y"] = event.y_root
+            drag["top"] = canvas.yview()[0]
+
+            # Don't hijack text selection or scrollbar dragging
+            drag["ok"] = event.widget.winfo_class() not in (
+                "Entry", "TEntry", "Scrollbar", "TScrollbar"
             )
 
-        canvas.bind_all("<MouseWheel>", scroll_with_mouse)
+        def on_drag(event):
+
+            if not drag["ok"] or not scrollable():
+                return
+
+            total = max(content.winfo_reqheight(), 1)
+
+            moved = (event.y_root - drag["y"]) / total
+
+            canvas.yview_moveto(max(0.0, drag["top"] - moved))
+
+        self.root.bind_all("<MouseWheel>", on_wheel)
+        self.root.bind_all("<Button-4>", on_wheel)
+        self.root.bind_all("<Button-5>", on_wheel)
+        self.root.bind_all("<ButtonPress-1>", on_press, add="+")
+        self.root.bind_all("<B1-Motion>", on_drag, add="+")
+
+        Label(
+            content,
+            text=title,
+            font=self.font(6, True),
+            bg=BG,
+            fg=TEXT,
+            wraplength=self.wrap(),
+            justify=CENTER
+        ).pack(pady=(24, 14), padx=12)
 
         return content
+
+    def wrap(self):
+        """Text wrap width that fits the current screen."""
+
+        width = self.root.winfo_screenwidth() if self.mobile \
+            else MAX_CONTENT_WIDTH
+
+        return max(220, min(width, MAX_CONTENT_WIDTH) - 70)
+
+    def button(self, parent, text, command, kind="primary"):
+
+        colors = {
+            "primary": (PRIMARY, "white"),
+            "secondary": ("#e6ebf5", PRIMARY),
+            "danger": (DANGER, "white")
+        }
+
+        bg, fg = colors[kind]
+
+        Button(
+            parent,
+            text=text,
+            command=command,
+            font=self.font(1, True),
+            bg=bg,
+            fg=fg,
+            activebackground=bg,
+            activeforeground=fg,
+            relief=FLAT,
+            bd=0,
+            cursor="hand2"
+        ).pack(
+            fill=X,
+            padx=16,
+            pady=6,
+            ipady=12 if self.mobile else 8
+        )
+
+    def card(self, parent, heading=None):
+
+        frame = Frame(
+            parent,
+            bg=CARD,
+            highlightbackground=BORDER,
+            highlightthickness=1
+        )
+
+        frame.pack(fill=X, padx=12, pady=6)
+
+        if heading:
+
+            Label(
+                frame,
+                text=heading,
+                font=self.font(1, True),
+                bg=CARD,
+                fg=TEXT,
+                anchor="w",
+                wraplength=self.wrap(),
+                justify=LEFT
+            ).pack(fill=X, padx=12, pady=(10, 4))
+
+        return frame
+
+    def row(self, parent, label, value, bold=False):
+
+        line = Frame(parent, bg=CARD)
+        line.pack(fill=X, padx=12, pady=3)
+
+        Label(
+            line,
+            text=label,
+            font=self.font(-1),
+            bg=CARD,
+            fg=MUTED,
+            anchor="w"
+        ).pack(side=LEFT)
+
+        Label(
+            line,
+            text=str(value),
+            font=self.font(0, bold),
+            bg=CARD,
+            fg=TEXT,
+            anchor="e",
+            justify=RIGHT,
+            wraplength=int(self.wrap() * 0.6)
+        ).pack(side=RIGHT)
+
+    def end_card(self, card):
+        """Bottom padding for a card."""
+
+        Frame(card, bg=CARD, height=8).pack()
+
+    def field(self, parent, label, show="", default=""):
+
+        Label(
+            parent,
+            text=label,
+            font=self.font(-1, True),
+            bg=BG,
+            fg=TEXT,
+            anchor="w"
+        ).pack(fill=X, padx=16, pady=(10, 2))
+
+        entry = Entry(
+            parent,
+            font=self.font(1),
+            show=show,
+            relief=SOLID,
+            bd=1,
+            highlightthickness=1,
+            highlightcolor=PRIMARY,
+            highlightbackground=BORDER
+        )
+
+        entry.pack(
+            fill=X,
+            padx=16,
+            ipady=9 if self.mobile else 5
+        )
+
+        if default:
+            entry.insert(0, default)
+
+        return entry
+
+    def note(self, parent, text):
+
+        Label(
+            parent,
+            text=text,
+            font=self.font(-2),
+            bg=BG,
+            fg=MUTED,
+            wraplength=self.wrap(),
+            justify=CENTER
+        ).pack(pady=6, padx=12)
 
     # ------------------------------------------------------------------
     # MAIN / LOGIN
@@ -258,49 +522,21 @@ class PayrollSystem:
 
     def main_page(self):
 
-        self.clear_window()
+        content = self.new_page("PAYROLL SYSTEM")
 
-        self.create_title("PAYROLL SYSTEM")
-
-        Button(
-            self.root,
-            text="Employee Login",
-            width=30,
-            command=self.employee_login_page
-        ).pack(pady=10)
-
-        Button(
-            self.root,
-            text="Admin Login",
-            width=30,
-            command=self.admin_login_page
-        ).pack(pady=10)
+        self.button(content, "Employee Login", self.employee_login_page)
+        self.button(
+            content, "Admin Login", self.admin_login_page, "secondary"
+        )
 
     def admin_login_page(self):
 
-        self.clear_window()
+        content = self.new_page("ADMIN LOGIN")
 
-        self.create_title("ADMIN LOGIN")
+        username = self.field(content, "Username")
+        password = self.field(content, "Password", show="*")
 
-        Label(self.root, text="Username").pack()
-
-        username = Entry(self.root, width=35)
-        username.pack(pady=5)
-
-        Label(self.root, text="Password").pack()
-
-        password = Entry(
-            self.root,
-            width=35,
-            show="*"
-        )
-        password.pack(pady=5)
-
-        Label(
-            self.root,
-            text="Demo credentials: admin / admin123",
-            font=("Arial", 9)
-        ).pack(pady=5)
+        self.note(content, "Demo credentials: admin / admin123")
 
         def login():
 
@@ -313,18 +549,8 @@ class PayrollSystem:
                     "Incorrect username or password."
                 )
 
-        Button(
-            self.root,
-            text="Login",
-            width=20,
-            command=login
-        ).pack(pady=15)
-
-        Button(
-            self.root,
-            text="Back",
-            command=self.main_page
-        ).pack()
+        self.button(content, "Login", login)
+        self.button(content, "Back", self.main_page, "secondary")
 
     # ------------------------------------------------------------------
     # ADMIN
@@ -332,56 +558,23 @@ class PayrollSystem:
 
     def admin_page(self):
 
-        self.clear_window()
+        content = self.new_page("ADMIN DASHBOARD")
 
-        self.create_title("ADMIN DASHBOARD")
-
-        Button(
-            self.root,
-            text="Add Employee",
-            width=30,
-            command=self.add_employee_page
-        ).pack(pady=8)
-
-        Button(
-            self.root,
-            text="Employee Information",
-            width=30,
-            command=self.employee_info_page
-        ).pack(pady=8)
-
-        Button(
-            self.root,
-            text="Calculate Payroll",
-            width=30,
-            command=self.calculate_payroll_page
-        ).pack(pady=8)
-
-        Button(
-            self.root,
-            text="Payroll Records",
-            width=30,
-            command=self.payroll_records_page
-        ).pack(pady=8)
-
-        Button(
-            self.root,
-            text="Logout",
-            width=30,
-            command=self.main_page
-        ).pack(pady=8)
+        self.button(content, "Add Employee", self.add_employee_page)
+        self.button(
+            content, "Employee Information", self.employee_info_page
+        )
+        self.button(
+            content, "Calculate Payroll", self.calculate_payroll_page
+        )
+        self.button(
+            content, "Payroll Records", self.payroll_records_page
+        )
+        self.button(content, "Logout", self.main_page, "secondary")
 
     def add_employee_page(self):
 
-        self.clear_window()
-
-        content = self.create_scrollable_frame()
-
-        Label(
-            content,
-            text="ADD EMPLOYEE",
-            font=("Arial", 20, "bold")
-        ).pack(pady=20)
+        content = self.new_page("ADD EMPLOYEE")
 
         fields = [
             "Employee Name",
@@ -398,43 +591,16 @@ class PayrollSystem:
 
         entries = {}
 
-        form = Frame(content)
-        form.pack(pady=5)
+        for field in fields:
 
-        for row, field in enumerate(fields):
-
-            Label(
-                form,
-                text=field,
-                anchor="w"
-            ).grid(
-                row=row,
-                column=0,
-                sticky="w",
-                padx=10,
-                pady=6
+            entries[field] = self.field(
+                content,
+                field if field != "Date Hired"
+                else "Date Hired (YYYY-MM-DD)",
+                show="*" if field == "Password" else "",
+                default=datetime.now().strftime("%Y-%m-%d")
+                if field == "Date Hired" else ""
             )
-
-            entry = Entry(
-                form,
-                width=45,
-                show="*" if field == "Password" else ""
-            )
-
-            entry.grid(
-                row=row,
-                column=1,
-                padx=10,
-                pady=6
-            )
-
-            if field == "Date Hired":
-                entry.insert(
-                    0,
-                    datetime.now().strftime("%Y-%m-%d")
-                )
-
-            entries[field] = entry
 
         def submit():
 
@@ -528,90 +694,14 @@ class PayrollSystem:
             finally:
                 conn.close()
 
-        Button(
-            content,
-            text="Submit",
-            width=20,
-            command=submit
-        ).pack(pady=12)
+        Frame(content, bg=BG, height=10).pack()
 
-        Button(
-            content,
-            text="Back",
-            width=20,
-            command=self.admin_page
-        ).pack(pady=10)
+        self.button(content, "Submit", submit)
+        self.button(content, "Back", self.admin_page, "secondary")
 
     def employee_info_page(self):
 
-        self.clear_window()
-
-        self.create_title("EMPLOYEE INFORMATION")
-
-        table_frame = Frame(self.root)
-        table_frame.pack(
-            fill=BOTH,
-            expand=True,
-            padx=10,
-            pady=10
-        )
-
-        columns = (
-            "id",
-            "name",
-            "position",
-            "department",
-            "dailyrate",
-            "email",
-            "phone"
-        )
-
-        table = ttk.Treeview(
-            table_frame,
-            columns=columns,
-            show="headings"
-        )
-
-        headings = {
-            "id": "Employee ID",
-            "name": "Name",
-            "position": "Position",
-            "department": "Department",
-            "dailyrate": "Daily Rate",
-            "email": "Email",
-            "phone": "Phone"
-        }
-
-        for column, heading in headings.items():
-
-            table.heading(column, text=heading)
-            table.column(column, width=120)
-
-        table.column("id", width=180)
-
-        vertical_scrollbar = ttk.Scrollbar(
-            table_frame,
-            orient=VERTICAL,
-            command=table.yview
-        )
-
-        horizontal_scrollbar = ttk.Scrollbar(
-            table_frame,
-            orient=HORIZONTAL,
-            command=table.xview
-        )
-
-        table.configure(
-            yscrollcommand=vertical_scrollbar.set,
-            xscrollcommand=horizontal_scrollbar.set
-        )
-
-        table.grid(row=0, column=0, sticky="nsew")
-        vertical_scrollbar.grid(row=0, column=1, sticky="ns")
-        horizontal_scrollbar.grid(row=1, column=0, sticky="ew")
-
-        table_frame.grid_rowconfigure(0, weight=1)
-        table_frame.grid_columnconfigure(0, weight=1)
+        content = self.new_page("EMPLOYEE INFORMATION")
 
         conn = self.connect_database()
         cur = conn.cursor()
@@ -620,52 +710,219 @@ class PayrollSystem:
             SELECT id, name, position, department,
                    dailyrate, email, phone
             FROM employees
+            ORDER BY name
         """)
 
         employees = cur.fetchall()
 
         conn.close()
 
-        for employee in employees:
+        if not employees:
+            self.note(content, "No employees yet.")
 
-            table.insert(
-                "",
-                END,
-                values=employee
+        for emp in employees:
+
+            card = self.card(content, emp[1])
+
+            self.row(card, "Position", emp[2])
+            self.row(card, "Department", emp[3])
+            self.row(card, "Daily Rate", f"₱{emp[4]:,.2f}")
+            self.row(card, "Email", emp[5] or "")
+            self.row(card, "Phone", emp[6] or "")
+            self.row(card, "ID", emp[0][:8] + "...")
+
+            Button(
+                card,
+                text="Edit",
+                command=lambda i=emp[0]: self.edit_employee_page(i),
+                font=self.font(0, True),
+                bg=PRIMARY,
+                fg="white",
+                activebackground=PRIMARY,
+                activeforeground="white",
+                relief=FLAT,
+                bd=0
+            ).pack(
+                fill=X,
+                padx=12,
+                pady=(8, 12),
+                ipady=10 if self.mobile else 6
             )
 
-        Button(
-            self.root,
-            text="Back",
-            command=self.admin_page
-        ).pack(pady=10)
+        self.button(content, "Back", self.admin_page, "secondary")
+
+    def edit_employee_page(self, employee_id):
+
+        conn = self.connect_database()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT name, position, department, dailyrate,
+                   email, phone, address, date_hired, username
+            FROM employees
+            WHERE id = ?
+        """, (employee_id,))
+
+        employee = cur.fetchone()
+
+        conn.close()
+
+        if employee is None:
+            messagebox.showerror("Error", "Employee not found.")
+            self.employee_info_page()
+            return
+
+        content = self.new_page("EDIT EMPLOYEE")
+
+        labels = [
+            ("name", "Employee Name"),
+            ("position", "Position"),
+            ("department", "Department"),
+            ("dailyrate", "Daily Rate"),
+            ("email", "Email"),
+            ("phone", "Phone Number"),
+            ("address", "Address"),
+            ("date_hired", "Date Hired (YYYY-MM-DD)"),
+            ("username", "Username"),
+        ]
+
+        entries = {}
+
+        for index, (key, label) in enumerate(labels):
+
+            value = employee[index]
+
+            entries[key] = self.field(
+                content,
+                label,
+                default="" if value is None else str(value)
+            )
+
+        new_password = self.field(
+            content,
+            "New Password (leave blank to keep current)",
+            show="*"
+        )
+
+        self.note(
+            content,
+            "A changed daily rate applies to payroll calculated "
+            "from now on. Saved payrolls are not changed."
+        )
+
+        def save():
+
+            values = {
+                key: entry.get().strip()
+                for key, entry in entries.items()
+            }
+
+            if not all(values.values()):
+
+                messagebox.showerror(
+                    "Error",
+                    "Please complete all fields."
+                )
+                return
+
+            try:
+
+                daily_rate = float(values["dailyrate"])
+
+                if daily_rate <= 0:
+                    raise ValueError
+
+                datetime.strptime(
+                    values["date_hired"],
+                    "%Y-%m-%d"
+                )
+
+            except ValueError:
+
+                messagebox.showerror(
+                    "Error",
+                    "Enter a valid daily rate and date (YYYY-MM-DD)."
+                )
+                return
+
+            password = new_password.get()
+
+            if not messagebox.askyesno(
+                "Save Changes",
+                f"Save changes for {values['name']}?"
+            ):
+                return
+
+            conn = self.connect_database()
+            cur = conn.cursor()
+
+            try:
+
+                cur.execute("""
+                    UPDATE employees
+                    SET name = ?, position = ?, department = ?,
+                        dailyrate = ?, email = ?, phone = ?,
+                        address = ?, date_hired = ?, username = ?
+                    WHERE id = ?
+                """, (
+                    values["name"],
+                    values["position"],
+                    values["department"],
+                    daily_rate,
+                    values["email"],
+                    values["phone"],
+                    values["address"],
+                    values["date_hired"],
+                    values["username"],
+                    employee_id
+                ))
+
+                if password:
+
+                    cur.execute(
+                        "UPDATE employees SET password_hash = ? "
+                        "WHERE id = ?",
+                        (self.hash_password(password), employee_id)
+                    )
+
+                conn.commit()
+
+            except sqlite3.IntegrityError:
+
+                conn.rollback()
+                conn.close()
+
+                messagebox.showerror(
+                    "Error",
+                    "Username already exists."
+                )
+                return
+
+            conn.close()
+
+            messagebox.showinfo(
+                "Success",
+                "Employee updated successfully!"
+            )
+
+            self.employee_info_page()
+
+        Frame(content, bg=BG, height=10).pack()
+
+        self.button(content, "Save Changes", save)
+        self.button(
+            content, "Cancel", self.employee_info_page, "secondary"
+        )
 
     def calculate_payroll_page(self):
 
-        self.clear_window()
+        content = self.new_page("CALCULATE PAYROLL")
 
-        self.create_title("CALCULATE PAYROLL")
-
-        columns = ("id", "name", "dailyrate", "unpaid_days")
-
-        table = ttk.Treeview(
-            self.root,
-            columns=columns,
-            show="headings",
-            height=8
+        self.note(
+            content,
+            "Days worked come from unpaid attendance records "
+            "(with a time out)."
         )
-
-        table.heading("id", text="Employee ID")
-        table.heading("name", text="Employee Name")
-        table.heading("dailyrate", text="Daily Rate")
-        table.heading("unpaid_days", text="Unpaid Days (Attendance)")
-
-        table.column("id", width=280)
-        table.column("name", width=200)
-        table.column("dailyrate", width=120)
-        table.column("unpaid_days", width=180)
-
-        table.pack(fill=X, padx=10, pady=10)
 
         conn = self.connect_database()
         cur = conn.cursor()
@@ -680,190 +937,137 @@ class PayrollSystem:
             ORDER BY e.name
         """)
 
-        for employee in cur.fetchall():
-            table.insert("", END, values=employee)
+        employees = cur.fetchall()
 
         conn.close()
 
-        Label(
-            self.root,
-            text="Select an employee. Days worked are taken from "
-                 "unpaid attendance records.",
-            font=("Arial", 10)
-        ).pack(pady=5)
+        if not employees:
+            self.note(content, "No employees yet.")
 
-        result_label = Label(
-            self.root,
-            text="Gross: ₱0.00   |   SSS: ₱0.00   |   Pag-IBIG: ₱0.00\n"
-                 "Tax: ₱0.00   |   Net: ₱0.00",
-            font=("Arial", 12, "bold")
+        for employee_id, name, daily_rate, unpaid in employees:
+
+            card = self.card(content, name)
+
+            self.row(card, "Daily Rate", f"₱{daily_rate:,.2f}")
+            self.row(card, "Unpaid Days", unpaid, bold=True)
+
+            Button(
+                card,
+                text="Calculate & Save",
+                command=lambda i=employee_id, n=name, r=daily_rate:
+                    self.calculate_payroll(i, n, r),
+                font=self.font(0, True),
+                bg=PRIMARY if unpaid else BORDER,
+                fg="white" if unpaid else MUTED,
+                relief=FLAT,
+                bd=0,
+                state=NORMAL if unpaid else DISABLED
+            ).pack(
+                fill=X,
+                padx=12,
+                pady=(8, 12),
+                ipady=10 if self.mobile else 6
+            )
+
+        self.button(content, "Back", self.admin_page, "secondary")
+
+    def calculate_payroll(self, employee_id, name, daily_rate):
+
+        conn = self.connect_database()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT id FROM attendance
+            WHERE employee_id = ?
+            AND payroll_id IS NULL
+            AND time_out IS NOT NULL
+        """, (employee_id,))
+
+        attendance_ids = [row[0] for row in cur.fetchall()]
+        days = len(attendance_ids)
+
+        if days == 0:
+            conn.close()
+            messagebox.showerror(
+                "Error",
+                "No unpaid attendance records for this employee."
+            )
+            return
+
+        gross = round(daily_rate * days, 2)
+        sss = self.compute_sss(gross)
+        pagibig = self.compute_pagibig(gross)
+
+        # SSS and Pag-IBIG contributions are tax-exempt,
+        # so withholding tax is computed on what remains
+        taxable_income = gross - sss - pagibig
+        tax = self.compute_tax(taxable_income)
+
+        net = round(gross - sss - pagibig - tax, 2)
+
+        confirm = messagebox.askyesno(
+            "Confirm Payroll",
+            f"Employee: {name}\n"
+            f"Days Worked: {days}\n"
+            f"Gross Pay: ₱{gross:,.2f}\n"
+            f"SSS: ₱{sss:,.2f}\n"
+            f"Pag-IBIG: ₱{pagibig:,.2f}\n"
+            f"Withholding Tax: ₱{tax:,.2f}\n"
+            f"Net Pay: ₱{net:,.2f}\n\n"
+            f"Save this payroll?"
         )
-        result_label.pack(pady=10)
 
-        def calculate():
+        if not confirm:
+            conn.close()
+            return
 
-            selected = table.selection()
+        payroll_id = str(uuid.uuid4())
 
-            if not selected:
-                messagebox.showerror(
-                    "Error",
-                    "Please select an employee."
-                )
-                return
-
-            values = table.item(selected[0], "values")
-
-            employee_id = values[0]
-            name = values[1]
-            daily_rate = float(values[2])
-
-            conn = self.connect_database()
-            cur = conn.cursor()
+        try:
 
             cur.execute("""
-                SELECT id FROM attendance
-                WHERE employee_id = ?
-                AND payroll_id IS NULL
-                AND time_out IS NOT NULL
-            """, (employee_id,))
-
-            attendance_ids = [row[0] for row in cur.fetchall()]
-            days = len(attendance_ids)
-
-            if days == 0:
-                conn.close()
-                messagebox.showerror(
-                    "Error",
-                    "No unpaid attendance records for this employee."
+                INSERT INTO payroll (
+                    id, employee_id, days_worked,
+                    gross_pay, sss, pagibig, tax, net_pay, date
                 )
-                return
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                payroll_id,
+                employee_id,
+                days,
+                gross,
+                sss,
+                pagibig,
+                tax,
+                net,
+                datetime.now().strftime("%Y-%m-%d")
+            ))
 
-            gross = round(daily_rate * days, 2)
-            sss = self.compute_sss(gross)
-            pagibig = self.compute_pagibig(gross)
-
-            # SSS and Pag-IBIG contributions are tax-exempt,
-            # so withholding tax is computed on what remains
-            taxable_income = gross - sss - pagibig
-            tax = self.compute_tax(taxable_income)
-
-            net = round(gross - sss - pagibig - tax, 2)
-
-            result_label.config(
-                text=f"Gross: ₱{gross:,.2f}   |   "
-                     f"SSS: ₱{sss:,.2f}   |   "
-                     f"Pag-IBIG: ₱{pagibig:,.2f}\n"
-                     f"Tax: ₱{tax:,.2f}   |   Net: ₱{net:,.2f}"
+            cur.executemany(
+                "UPDATE attendance SET payroll_id = ? WHERE id = ?",
+                [(payroll_id, att_id) for att_id in attendance_ids]
             )
 
-            confirm = messagebox.askyesno(
-                "Confirm Payroll",
-                f"Employee: {name}\n"
-                f"Days Worked: {days}\n"
-                f"Gross Pay: ₱{gross:,.2f}\n"
-                f"SSS: ₱{sss:,.2f}\n"
-                f"Pag-IBIG: ₱{pagibig:,.2f}\n"
-                f"Withholding Tax: ₱{tax:,.2f}\n"
-                f"Net Pay: ₱{net:,.2f}\n\n"
-                f"Save this payroll?"
+            conn.commit()
+
+            messagebox.showinfo(
+                "Success",
+                "Payroll saved successfully!"
             )
 
-            if not confirm:
-                conn.close()
-                return
+        except sqlite3.Error as error:
 
-            payroll_id = str(uuid.uuid4())
+            conn.rollback()
+            messagebox.showerror("Database Error", str(error))
 
-            try:
+        finally:
+            conn.close()
 
-                cur.execute("""
-                    INSERT INTO payroll (
-                        id, employee_id, days_worked,
-                        gross_pay, sss, pagibig, tax, net_pay, date
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    payroll_id,
-                    employee_id,
-                    days,
-                    gross,
-                    sss,
-                    pagibig,
-                    tax,
-                    net,
-                    datetime.now().strftime("%Y-%m-%d")
-                ))
-
-                cur.executemany(
-                    "UPDATE attendance SET payroll_id = ? WHERE id = ?",
-                    [(payroll_id, att_id) for att_id in attendance_ids]
-                )
-
-                conn.commit()
-
-                messagebox.showinfo(
-                    "Success",
-                    "Payroll saved successfully!"
-                )
-
-            except sqlite3.Error as error:
-
-                conn.rollback()
-                messagebox.showerror("Database Error", str(error))
-
-            finally:
-                conn.close()
-
-            self.calculate_payroll_page()
-
-        Button(
-            self.root,
-            text="Calculate & Save",
-            width=20,
-            command=calculate
-        ).pack(pady=5)
-
-        Button(
-            self.root,
-            text="Back",
-            command=self.admin_page
-        ).pack(pady=10)
+        self.calculate_payroll_page()
 
     def payroll_records_page(self):
 
-        self.clear_window()
-
-        self.create_title("PAYROLL RECORDS")
-
-        columns = (
-            "name", "days", "gross", "sss",
-            "pagibig", "tax", "net", "date"
-        )
-
-        table = ttk.Treeview(
-            self.root,
-            columns=columns,
-            show="headings"
-        )
-
-        table.heading("name", text="Employee")
-        table.heading("days", text="Days Worked")
-        table.heading("gross", text="Gross Pay")
-        table.heading("sss", text="SSS")
-        table.heading("pagibig", text="Pag-IBIG")
-        table.heading("tax", text="Tax")
-        table.heading("net", text="Net Pay")
-        table.heading("date", text="Date")
-
-        for col in columns:
-            table.column(col, width=100, anchor="center")
-
-        table.pack(
-            fill=BOTH,
-            expand=True,
-            padx=10,
-            pady=10
-        )
+        content = self.new_page("PAYROLL RECORDS")
 
         conn = self.connect_database()
         cur = conn.cursor()
@@ -887,28 +1091,23 @@ class PayrollSystem:
 
         conn.close()
 
+        if not records:
+            self.note(content, "No payroll records yet.")
+
         for r in records:
 
-            table.insert(
-                "",
-                END,
-                values=(
-                    r[0],
-                    r[1],
-                    f"₱{r[2]:,.2f}",
-                    f"₱{r[3]:,.2f}",
-                    f"₱{r[4]:,.2f}",
-                    f"₱{r[5]:,.2f}",
-                    f"₱{r[6]:,.2f}",
-                    r[7]
-                )
-            )
+            card = self.card(content, f"{r[0]}  •  {r[7]}")
 
-        Button(
-            self.root,
-            text="Back",
-            command=self.admin_page
-        ).pack(pady=10)
+            self.row(card, "Days Worked", r[1])
+            self.row(card, "Gross Pay", f"₱{r[2]:,.2f}")
+            self.row(card, "SSS", f"₱{r[3]:,.2f}")
+            self.row(card, "Pag-IBIG", f"₱{r[4]:,.2f}")
+            self.row(card, "Tax", f"₱{r[5]:,.2f}")
+            self.row(card, "Net Pay", f"₱{r[6]:,.2f}", bold=True)
+
+            self.end_card(card)
+
+        self.button(content, "Back", self.admin_page, "secondary")
 
     # ------------------------------------------------------------------
     # EMPLOYEE
@@ -916,24 +1115,12 @@ class PayrollSystem:
 
     def employee_login_page(self):
 
-        self.clear_window()
+        content = self.new_page("EMPLOYEE LOGIN")
 
-        self.create_title("EMPLOYEE LOGIN")
+        username = self.field(content, "Username")
+        password = self.field(content, "Password", show="*")
 
-        Label(self.root, text="Username").pack()
-
-        username = Entry(self.root, width=35)
-        username.pack(pady=5)
-
-        Label(self.root, text="Password").pack()
-
-        password = Entry(
-            self.root,
-            width=35,
-            show="*"
-        )
-
-        password.pack(pady=5)
+        Frame(content, bg=BG, height=10).pack()
 
         def login():
 
@@ -974,22 +1161,10 @@ class PayrollSystem:
                     "Incorrect password."
                 )
 
-        Button(
-            self.root,
-            text="Login",
-            width=20,
-            command=login
-        ).pack(pady=15)
-
-        Button(
-            self.root,
-            text="Back",
-            command=self.main_page
-        ).pack()
+        self.button(content, "Login", login)
+        self.button(content, "Back", self.main_page, "secondary")
 
     def employee_dashboard(self, employee_id):
-
-        self.clear_window()
 
         conn = self.connect_database()
         cur = conn.cursor()
@@ -1021,78 +1196,45 @@ class PayrollSystem:
             daily_rate
         ) = employee
 
-        self.create_title(
-            f"WELCOME, {name.upper()}"
+        content = self.new_page(f"WELCOME, {name.upper()}")
+
+        card = self.card(content)
+
+        Frame(card, bg=CARD, height=6).pack()
+
+        self.row(card, "Position", position)
+        self.row(card, "Department", department)
+        self.row(card, "Email", email or "")
+        self.row(card, "Phone", phone or "")
+        self.row(card, "Address", address or "")
+        self.row(card, "Date Hired", date_hired or "")
+        self.row(card, "Daily Rate", f"₱{daily_rate:,.2f}")
+
+        self.end_card(card)
+
+        self.button(
+            content,
+            "My Attendance",
+            lambda: self.employee_attendance_page(employee_id)
         )
 
-        Label(
-            self.root,
-            text=f"Position: {position}"
-        ).pack(pady=3)
+        self.button(
+            content,
+            "My Payslips",
+            lambda: self.employee_payslip_page(employee_id)
+        )
 
-        Label(
-            self.root,
-            text=f"Department: {department}"
-        ).pack(pady=3)
+        self.button(
+            content,
+            "My Payroll History",
+            lambda: self.employee_payroll_page(employee_id)
+        )
 
-        Label(
-            self.root,
-            text=f"Email: {email}"
-        ).pack(pady=3)
-
-        Label(
-            self.root,
-            text=f"Phone: {phone}"
-        ).pack(pady=3)
-
-        Label(
-            self.root,
-            text=f"Address: {address}"
-        ).pack(pady=3)
-
-        Label(
-            self.root,
-            text=f"Date Hired: {date_hired}"
-        ).pack(pady=3)
-
-        Label(
-            self.root,
-            text=f"Daily Rate: ₱{daily_rate:,.2f}"
-        ).pack(pady=3)
-
-        Button(
-            self.root,
-            text="My Attendance",
-            width=25,
-            command=lambda: self.employee_attendance_page(employee_id)
-        ).pack(pady=6)
-
-        Button(
-            self.root,
-            text="My Payslips",
-            width=25,
-            command=lambda: self.employee_payslip_page(employee_id)
-        ).pack(pady=6)
-
-        Button(
-            self.root,
-            text="My Payroll History",
-            width=25,
-            command=lambda: self.employee_payroll_page(employee_id)
-        ).pack(pady=6)
-
-        Button(
-            self.root,
-            text="Logout",
-            width=25,
-            command=self.main_page
-        ).pack(pady=5)
+        self.button(content, "Logout", self.main_page, "secondary")
 
     def employee_attendance_page(self, employee_id):
 
-        self.clear_window()
-
-        self.create_title("MY ATTENDANCE")
+        content = self.new_page("MY ATTENDANCE")
 
         today = datetime.now().strftime("%Y-%m-%d")
 
@@ -1107,37 +1249,32 @@ class PayrollSystem:
 
         attendance = cur.fetchone()
 
+        cur.execute("""
+            SELECT date, time_in, time_out, hours_worked
+            FROM attendance
+            WHERE employee_id = ?
+            ORDER BY date DESC
+        """, (employee_id,))
+
+        records = cur.fetchall()
+
         conn.close()
+
+        card = self.card(content, f"Today: {today}")
 
         if attendance:
 
-            Label(
-                self.root,
-                text=f"Date: {today}",
-                font=("Arial", 12, "bold")
-            ).pack(pady=5)
-
-            Label(
-                self.root,
-                text=f"Time In: {attendance[0] or 'Not recorded'}"
-            ).pack(pady=5)
-
-            Label(
-                self.root,
-                text=f"Time Out: {attendance[1] or 'Not recorded'}"
-            ).pack(pady=5)
-
-            Label(
-                self.root,
-                text=f"Working Hours: {attendance[2]:.2f}"
-            ).pack(pady=5)
+            self.row(card, "Time In", attendance[0] or "Not recorded")
+            self.row(card, "Time Out", attendance[1] or "Not recorded")
+            self.row(
+                card, "Working Hours", f"{(attendance[2] or 0):.2f}"
+            )
 
         else:
 
-            Label(
-                self.root,
-                text="You have not timed in today."
-            ).pack(pady=10)
+            self.row(card, "Status", "You have not timed in today.")
+
+        self.end_card(card)
 
         def time_in():
 
@@ -1253,120 +1390,40 @@ class PayrollSystem:
 
             self.employee_attendance_page(employee_id)
 
-        Button(
-            self.root,
-            text="TIME IN",
-            width=25,
-            command=time_in
-        ).pack(pady=8)
-
-        Button(
-            self.root,
-            text="TIME OUT",
-            width=25,
-            command=time_out
-        ).pack(pady=8)
+        self.button(content, "TIME IN", time_in)
+        self.button(content, "TIME OUT", time_out, "danger")
 
         Label(
-            self.root,
+            content,
             text="ATTENDANCE HISTORY",
-            font=("Arial", 14, "bold")
-        ).pack(pady=10)
+            font=self.font(2, True),
+            bg=BG,
+            fg=TEXT
+        ).pack(pady=(18, 6))
 
-        columns = (
-            "date",
-            "time_in",
-            "time_out",
-            "hours"
-        )
-
-        table = ttk.Treeview(
-            self.root,
-            columns=columns,
-            show="headings",
-            height=7
-        )
-
-        table.heading("date", text="Date")
-        table.heading("time_in", text="Time In")
-        table.heading("time_out", text="Time Out")
-        table.heading("hours", text="Working Hours")
-
-        table.pack(
-            fill=BOTH,
-            expand=True,
-            padx=10,
-            pady=5
-        )
-
-        conn = self.connect_database()
-        cur = conn.cursor()
-
-        cur.execute("""
-            SELECT date, time_in, time_out, hours_worked
-            FROM attendance
-            WHERE employee_id = ?
-            ORDER BY date DESC
-        """, (employee_id,))
-
-        records = cur.fetchall()
-
-        conn.close()
+        if not records:
+            self.note(content, "No attendance yet.")
 
         for record in records:
 
-            table.insert(
-                "",
-                END,
-                values=record
-            )
+            card = self.card(content, record[0])
 
-        Button(
-            self.root,
-            text="Back",
-            command=lambda: self.employee_dashboard(employee_id)
-        ).pack(pady=8)
+            self.row(card, "Time In", record[1] or "")
+            self.row(card, "Time Out", record[2] or "")
+            self.row(card, "Working Hours", f"{(record[3] or 0):.2f}")
+
+            self.end_card(card)
+
+        self.button(
+            content,
+            "Back",
+            lambda: self.employee_dashboard(employee_id),
+            "secondary"
+        )
 
     def employee_payslip_page(self, employee_id):
 
-        self.clear_window()
-
-        self.create_title("MY PAYSLIPS")
-
-        columns = (
-            "date",
-            "days",
-            "gross",
-            "sss",
-            "pagibig",
-            "tax",
-            "net"
-        )
-
-        table = ttk.Treeview(
-            self.root,
-            columns=columns,
-            show="headings",
-            height=12
-        )
-
-        table.heading("date", text="Payroll Date")
-        table.heading("days", text="Days Worked")
-        table.heading("gross", text="Gross Pay")
-        table.heading("sss", text="SSS")
-        table.heading("pagibig", text="Pag-IBIG")
-        table.heading("tax", text="Tax")
-        table.heading("net", text="Net Pay")
-
-        for col in columns:
-            table.column(col, width=115, anchor="center")
-
-        table.pack(
-            fill=BOTH,
-            expand=True,
-            padx=10,
-            pady=10
-        )
+        content = self.new_page("MY PAYSLIPS")
 
         conn = self.connect_database()
         cur = conn.cursor()
@@ -1386,180 +1443,122 @@ class PayrollSystem:
 
         conn.close()
 
+        if not records:
+            self.note(content, "No payslips yet.")
+
         for r in records:
 
-            table.insert(
-                "",
-                END,
-                iid=r[0],
-                values=(
-                    r[1],
-                    r[2],
-                    f"₱{r[3]:,.2f}",
-                    f"₱{r[4]:,.2f}",
-                    f"₱{r[5]:,.2f}",
-                    f"₱{r[6]:,.2f}",
-                    f"₱{r[7]:,.2f}"
-                )
-            )
+            card = self.card(content, r[1])
 
-        def view_payslip():
-
-            selected = table.selection()
-
-            if not selected:
-
-                messagebox.showerror(
-                    "Error",
-                    "Please select a payslip."
-                )
-                return
-
-            payroll_id = selected[0]
-
-            conn = self.connect_database()
-            cur = conn.cursor()
-
-            cur.execute("""
-                SELECT employees.name,
-                       employees.position,
-                       employees.department,
-                       employees.dailyrate,
-                       payroll.days_worked,
-                       payroll.gross_pay,
-                       COALESCE(payroll.sss, 0),
-                       COALESCE(payroll.pagibig, 0),
-                       COALESCE(payroll.tax, 0),
-                       COALESCE(payroll.net_pay, payroll.gross_pay),
-                       payroll.date
-                FROM payroll
-                JOIN employees
-                ON payroll.employee_id = employees.id
-                WHERE payroll.id = ?
-                AND payroll.employee_id = ?
-            """, (payroll_id, employee_id))
-
-            record = cur.fetchone()
-
-            conn.close()
-
-            if record is None:
-                return
-
-            (
-                name,
-                position,
-                department,
-                rate,
-                days,
-                gross,
-                sss,
-                pagibig,
-                tax,
-                net,
-                date
-            ) = record
-
-            payslip = Toplevel(self.root)
-            payslip.title("Employee Payslip")
-            payslip.geometry("400x620")
-            payslip.resizable(False, False)
-
-            Label(
-                payslip,
-                text="EMPLOYEE PAYSLIP",
-                font=("Arial", 18, "bold")
-            ).pack(pady=20)
-
-            details = [
-                ("Employee Name", name),
-                ("Position", position),
-                ("Department", department),
-                ("Payroll Date", date),
-                ("Daily Rate", f"₱{rate:,.2f}"),
-                ("Days Worked", str(days)),
-                ("Gross Pay", f"₱{gross:,.2f}"),
-                ("SSS Contribution", f"₱{sss:,.2f}"),
-                ("Pag-IBIG Contribution", f"₱{pagibig:,.2f}"),
-                ("Withholding Tax", f"₱{tax:,.2f}")
-            ]
-
-            for label, value in details:
-
-                Label(
-                    payslip,
-                    text=f"{label}: {value}",
-                    font=("Arial", 11)
-                ).pack(
-                    anchor="w",
-                    padx=30,
-                    pady=5
-                )
-
-            Label(
-                payslip,
-                text=f"NET PAY: ₱{net:,.2f}",
-                font=("Arial", 16, "bold")
-            ).pack(pady=20)
+            self.row(card, "Days Worked", r[2])
+            self.row(card, "Gross Pay", f"₱{r[3]:,.2f}")
+            self.row(card, "Net Pay", f"₱{r[7]:,.2f}", bold=True)
 
             Button(
-                payslip,
-                text="Close",
-                command=payslip.destroy
-            ).pack(pady=10)
+                card,
+                text="View Payslip",
+                command=lambda pid=r[0]:
+                    self.payslip_view_page(employee_id, pid),
+                font=self.font(0, True),
+                bg=PRIMARY,
+                fg="white",
+                relief=FLAT,
+                bd=0
+            ).pack(
+                fill=X,
+                padx=12,
+                pady=(8, 12),
+                ipady=10 if self.mobile else 6
+            )
 
-        Button(
-            self.root,
-            text="View Payslip",
-            width=20,
-            command=view_payslip
-        ).pack(pady=10)
+        self.button(
+            content,
+            "Back",
+            lambda: self.employee_dashboard(employee_id),
+            "secondary"
+        )
 
-        Button(
-            self.root,
-            text="Back",
-            command=lambda: self.employee_dashboard(employee_id)
-        ).pack(pady=10)
+    def payslip_view_page(self, employee_id, payroll_id):
+        """The payslip is a normal page (pop-up windows are awkward
+        on phones)."""
+
+        conn = self.connect_database()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT employees.name,
+                   employees.position,
+                   employees.department,
+                   employees.dailyrate,
+                   payroll.days_worked,
+                   payroll.gross_pay,
+                   COALESCE(payroll.sss, 0),
+                   COALESCE(payroll.pagibig, 0),
+                   COALESCE(payroll.tax, 0),
+                   COALESCE(payroll.net_pay, payroll.gross_pay),
+                   payroll.date
+            FROM payroll
+            JOIN employees
+            ON payroll.employee_id = employees.id
+            WHERE payroll.id = ?
+            AND payroll.employee_id = ?
+        """, (payroll_id, employee_id))
+
+        record = cur.fetchone()
+
+        conn.close()
+
+        if record is None:
+            self.employee_payslip_page(employee_id)
+            return
+
+        (
+            name,
+            position,
+            department,
+            rate,
+            days,
+            gross,
+            sss,
+            pagibig,
+            tax,
+            net,
+            date
+        ) = record
+
+        content = self.new_page("EMPLOYEE PAYSLIP")
+
+        card = self.card(content)
+
+        Frame(card, bg=CARD, height=6).pack()
+
+        self.row(card, "Employee Name", name)
+        self.row(card, "Position", position)
+        self.row(card, "Department", department)
+        self.row(card, "Payroll Date", date)
+        self.row(card, "Daily Rate", f"₱{rate:,.2f}")
+        self.row(card, "Days Worked", days)
+        self.row(card, "Gross Pay", f"₱{gross:,.2f}")
+        self.row(card, "SSS Contribution", f"₱{sss:,.2f}")
+        self.row(card, "Pag-IBIG Contribution", f"₱{pagibig:,.2f}")
+        self.row(card, "Withholding Tax", f"₱{tax:,.2f}")
+
+        Frame(card, bg=BORDER, height=1).pack(fill=X, padx=12, pady=6)
+
+        self.row(card, "NET PAY", f"₱{net:,.2f}", bold=True)
+
+        self.end_card(card)
+
+        self.button(
+            content,
+            "Back",
+            lambda: self.employee_payslip_page(employee_id),
+            "secondary"
+        )
 
     def employee_payroll_page(self, employee_id):
 
-        self.clear_window()
-
-        self.create_title("MY PAYROLL HISTORY")
-
-        columns = (
-            "date",
-            "days",
-            "gross",
-            "sss",
-            "pagibig",
-            "tax",
-            "net"
-        )
-
-        table = ttk.Treeview(
-            self.root,
-            columns=columns,
-            show="headings"
-        )
-
-        table.heading("date", text="Date")
-        table.heading("days", text="Days Worked")
-        table.heading("gross", text="Gross Pay")
-        table.heading("sss", text="SSS")
-        table.heading("pagibig", text="Pag-IBIG")
-        table.heading("tax", text="Tax")
-        table.heading("net", text="Net Pay")
-
-        for col in columns:
-            table.column(col, width=115, anchor="center")
-
-        table.pack(
-            fill=BOTH,
-            expand=True,
-            padx=10,
-            pady=10
-        )
+        content = self.new_page("MY PAYROLL HISTORY")
 
         conn = self.connect_database()
         cur = conn.cursor()
@@ -1579,27 +1578,28 @@ class PayrollSystem:
 
         conn.close()
 
+        if not records:
+            self.note(content, "No payroll history yet.")
+
         for r in records:
 
-            table.insert(
-                "",
-                END,
-                values=(
-                    r[0],
-                    r[1],
-                    f"₱{r[2]:,.2f}",
-                    f"₱{r[3]:,.2f}",
-                    f"₱{r[4]:,.2f}",
-                    f"₱{r[5]:,.2f}",
-                    f"₱{r[6]:,.2f}"
-                )
-            )
+            card = self.card(content, r[0])
 
-        Button(
-            self.root,
-            text="Back",
-            command=lambda: self.employee_dashboard(employee_id)
-        ).pack(pady=10)
+            self.row(card, "Days Worked", r[1])
+            self.row(card, "Gross Pay", f"₱{r[2]:,.2f}")
+            self.row(card, "SSS", f"₱{r[3]:,.2f}")
+            self.row(card, "Pag-IBIG", f"₱{r[4]:,.2f}")
+            self.row(card, "Tax", f"₱{r[5]:,.2f}")
+            self.row(card, "Net Pay", f"₱{r[6]:,.2f}", bold=True)
+
+            self.end_card(card)
+
+        self.button(
+            content,
+            "Back",
+            lambda: self.employee_dashboard(employee_id),
+            "secondary"
+        )
 
     def run(self):
 
