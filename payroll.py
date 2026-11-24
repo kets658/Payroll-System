@@ -38,7 +38,7 @@ class PayrollSystem:
 
         self.root.resizable(True, True)
 
-        self.font_size = 10 if self.mobile else 11
+        self.font_size = 7 if self.mobile else 11
 
         self.create_database()
 
@@ -246,7 +246,8 @@ class PayrollSystem:
 
             canvas.itemconfigure(
                 window_id,
-                width=min(width, MAX_CONTENT_WIDTH)
+                width=width if self.mobile
+                else min(width, MAX_CONTENT_WIDTH)
             )
 
             canvas.coords(window_id, width // 2, 0)
@@ -334,10 +335,10 @@ class PayrollSystem:
 
     def wrap(self):
 
-        width = self.root.winfo_screenwidth() if self.mobile \
-            else MAX_CONTENT_WIDTH
+        if self.mobile:
+            return max(220, self.root.winfo_screenwidth() - 100)
 
-        return max(220, min(width, MAX_CONTENT_WIDTH) - 70)
+        return MAX_CONTENT_WIDTH - 70
 
     def button(self, parent, text, command, kind="primary"):
 
