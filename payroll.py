@@ -6,18 +6,6 @@ import hashlib
 import secrets
 from datetime import datetime
 
-# ----------------------------------------------------------------------
-# Phone-friendly Tkinter payroll system.
-# Runs on desktop and on Android through Pydroid 3 (it has Tkinter).
-#
-# What changed from the original:
-#   * window fills the screen on phones (no fixed 900x600)
-#   * every page scrolls, including by dragging with a finger
-#   * big touch-sized buttons and inputs
-#   * wide tables are replaced by cards that fit a narrow screen
-#   * the payslip is a page, not a pop-up window
-# The database, payroll formulas and password hashing are unchanged.
-# ----------------------------------------------------------------------
 
 BG = "#f4f6fa"
 CARD = "#ffffff"
@@ -27,7 +15,7 @@ DANGER = "#c0392b"
 MUTED = "#667085"
 TEXT = "#1c2333"
 
-MAX_CONTENT_WIDTH = 560     # content stays this wide on big screens
+MAX_CONTENT_WIDTH = 560
 
 
 class PayrollSystem:
@@ -40,7 +28,6 @@ class PayrollSystem:
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
 
-        # Phones: narrow screen or portrait orientation
         self.mobile = screen_w <= 800 or screen_h > screen_w
 
         if self.mobile:
@@ -51,14 +38,10 @@ class PayrollSystem:
 
         self.root.resizable(True, True)
 
-        # Bigger text and controls on phones
         self.font_size = 14 if self.mobile else 11
 
         self.create_database()
 
-    # ------------------------------------------------------------------
-    # DATABASE (unchanged)
-    # ------------------------------------------------------------------
 
     def connect_database(self):
         conn = sqlite3.connect("payroll.db")
@@ -106,7 +89,6 @@ class PayrollSystem:
             )
         """)
 
-        # Add any columns missing from older databases
         migrations = {
             "employees": [
                 ("email", "TEXT"),
@@ -184,17 +166,9 @@ class PayrollSystem:
         except (ValueError, AttributeError):
             return False
 
-    # ------------------------------------------------------------------
-    # PAYROLL COMPUTATIONS (unchanged)
-    # ------------------------------------------------------------------
 
     def compute_tax(self, gross):
-        """
-        Philippine TRAIN withholding tax (monthly brackets).
-        Gross pay is treated as monthly taxable income.
-        """
 
-        # (lower bound, base tax, rate on excess over lower bound)
         brackets = [
             (666667, 183541.80, 0.35),
             (166667, 33541.80, 0.30),
@@ -211,10 +185,6 @@ class PayrollSystem:
         return 0.0
 
     def compute_sss(self, monthly_pay):
-        """
-        SSS employee share (2025-2026 schedule): 5% of the Monthly Salary
-        Credit (MSC). MSC moves in PHP 500 steps, min 5,000, max 35,000.
-        """
 
         msc = int((monthly_pay + 250) // 500) * 500
         msc = max(5000, min(35000, msc))
@@ -222,18 +192,11 @@ class PayrollSystem:
         return round(msc * 0.05, 2)
 
     def compute_pagibig(self, monthly_pay):
-        """
-        Pag-IBIG (HDMF) employee share: 2% of monthly compensation,
-        with the Monthly Fund Salary capped at PHP 10,000 (max PHP 200).
-        """
 
         fund_salary = min(monthly_pay, 10000)
 
         return round(fund_salary * 0.02, 2)
 
-    # ------------------------------------------------------------------
-    # PHONE-FRIENDLY UI HELPERS
-    # ------------------------------------------------------------------
 
     def font(self, delta=0, bold=False):
 
@@ -245,7 +208,6 @@ class PayrollSystem:
 
     def clear_window(self):
 
-        # Remove scroll bindings left by the previous page
         for sequence in (
             "<MouseWheel>", "<Button-4>", "<Button-5>",
             "<ButtonPress-1>", "<B1-Motion>"
@@ -256,10 +218,6 @@ class PayrollSystem:
             widget.destroy()
 
     def new_page(self, title):
-        """
-        Clear the screen and return a scrollable, centered content frame
-        with the page title already added.
-        """
 
         self.clear_window()
 
@@ -312,14 +270,12 @@ class PayrollSystem:
 
         canvas.pack(side=LEFT, fill=BOTH, expand=True)
 
-        # Thin scrollbar only on desktop; phones scroll by dragging
         if not self.mobile:
             scrollbar.pack(side=RIGHT, fill=Y)
 
         def scrollable():
             return content.winfo_reqheight() > canvas.winfo_height()
 
-        # Mouse wheel (Windows / macOS / Linux)
         def on_wheel(event):
 
             if not scrollable():
@@ -336,7 +292,6 @@ class PayrollSystem:
                     else event.delta
                 canvas.yview_scroll(int(-step), "units")
 
-        # Finger / click-and-drag scrolling
         drag = {"y": 0, "top": 0.0, "ok": False}
 
         def on_press(event):
@@ -344,7 +299,6 @@ class PayrollSystem:
             drag["y"] = event.y_root
             drag["top"] = canvas.yview()[0]
 
-            # Don't hijack text selection or scrollbar dragging
             drag["ok"] = event.widget.winfo_class() not in (
                 "Entry", "TEntry", "Scrollbar", "TScrollbar"
             )
@@ -379,7 +333,6 @@ class PayrollSystem:
         return content
 
     def wrap(self):
-        """Text wrap width that fits the current screen."""
 
         width = self.root.winfo_screenwidth() if self.mobile \
             else MAX_CONTENT_WIDTH
@@ -467,7 +420,6 @@ class PayrollSystem:
         ).pack(side=RIGHT)
 
     def end_card(self, card):
-        """Bottom padding for a card."""
 
         Frame(card, bg=CARD, height=8).pack()
 
@@ -516,9 +468,6 @@ class PayrollSystem:
             justify=CENTER
         ).pack(pady=6, padx=12)
 
-    # ------------------------------------------------------------------
-    # MAIN / LOGIN
-    # ------------------------------------------------------------------
 
     def main_page(self):
 
@@ -552,9 +501,6 @@ class PayrollSystem:
         self.button(content, "Login", login)
         self.button(content, "Back", self.main_page, "secondary")
 
-    # ------------------------------------------------------------------
-    # ADMIN
-    # ------------------------------------------------------------------
 
     def admin_page(self):
 
@@ -998,8 +944,6 @@ class PayrollSystem:
         sss = self.compute_sss(gross)
         pagibig = self.compute_pagibig(gross)
 
-        # SSS and Pag-IBIG contributions are tax-exempt,
-        # so withholding tax is computed on what remains
         taxable_income = gross - sss - pagibig
         tax = self.compute_tax(taxable_income)
 
@@ -1109,9 +1053,6 @@ class PayrollSystem:
 
         self.button(content, "Back", self.admin_page, "secondary")
 
-    # ------------------------------------------------------------------
-    # EMPLOYEE
-    # ------------------------------------------------------------------
 
     def employee_login_page(self):
 
@@ -1479,8 +1420,6 @@ class PayrollSystem:
         )
 
     def payslip_view_page(self, employee_id, payroll_id):
-        """The payslip is a normal page (pop-up windows are awkward
-        on phones)."""
 
         conn = self.connect_database()
         cur = conn.cursor()
